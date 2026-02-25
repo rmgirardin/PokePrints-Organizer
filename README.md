@@ -1,4 +1,4 @@
-# PokePrint Organizer
+# PokePrints Organizer
 
 ![Platform macOS](https://img.shields.io/badge/platform-macOS-black)
 ![Shell Bash](https://img.shields.io/badge/shell-bash-4EAA25)
@@ -20,9 +20,10 @@ Input layout (`To Sort`):
 
 ```text
 To Sort/
-├── January 2026 - Pikachu Statue/
-├── Eevee Pikachu Diorama/
-└── Charizard Bust/
+└── January 2026/
+	├──Pikachu Statue/
+	├── Eevee Pikachu Diorama/
+	└── Charizard Bust/
 ```
 
 Sorted output (`Sorted by Pokemon`):
