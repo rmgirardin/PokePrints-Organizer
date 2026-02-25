@@ -175,6 +175,94 @@ resolve_project_scan_root() {
   printf ''
 }
 
+project_file_summary() {
+  local project_rel="$1"
+  local pokemon_name="${project_rel%%/*}"
+  local project_abs="$SORTED_DIR_ABS/$project_rel"
+  local scan_root=""
+  local scope_root=""
+  local summary=""
+
+  if [ "$project_rel" = "$pokemon_name" ]; then
+    if [ ! -d "$project_abs" ]; then
+      printf '0 total'
+      return 0
+    fi
+    summary="$(
+      find "$project_abs" -mindepth 1 -maxdepth 1 -type f \
+        | perl -e '
+            use strict;
+            use warnings;
+            my %counts;
+            my $total = 0;
+            while (my $path = <STDIN>) {
+              chomp $path;
+              next if $path eq "";
+              $total++;
+              my $name = $path;
+              $name =~ s{.*/}{};
+              my $ext = "no extension";
+              if ($name =~ /\.([^.]+)$/) {
+                $ext = lc $1;
+              }
+              $counts{$ext}++;
+            }
+
+            print "$total total";
+            if ($total > 0) {
+              my @parts = map {
+                my $label = ($_ eq "no extension") ? $_ : ".$_";
+                "$label: $counts{$_}"
+              } sort { $counts{$b} <=> $counts{$a} || $a cmp $b } keys %counts;
+              print " (" . join(", ", @parts) . ")";
+            }
+          '
+    )"
+    printf '%s' "${summary:-0 total}"
+    return 0
+  fi
+
+  scan_root="$(resolve_project_scan_root "$project_abs")"
+  if [ -z "$scan_root" ] || [ ! -d "$scan_root" ]; then
+    printf '0 total'
+    return 0
+  fi
+  scope_root="$scan_root"
+
+  summary="$(
+    find "$scope_root" -type f \
+      | perl -e '
+          use strict;
+          use warnings;
+          my %counts;
+          my $total = 0;
+          while (my $path = <STDIN>) {
+            chomp $path;
+            next if $path eq "";
+            $total++;
+            my $name = $path;
+            $name =~ s{.*/}{};
+            my $ext = "no extension";
+            if ($name =~ /\.([^.]+)$/) {
+              $ext = lc $1;
+            }
+            $counts{$ext}++;
+          }
+
+          print "$total total";
+          if ($total > 0) {
+            my @parts = map {
+              my $label = ($_ eq "no extension") ? $_ : ".$_";
+              "$label: $counts{$_}"
+            } sort { $counts{$b} <=> $counts{$a} || $a cmp $b } keys %counts;
+            print " (" . join(", ", @parts) . ")";
+          }
+        '
+  )"
+
+  printf '%s' "${summary:-0 total}"
+}
+
 resolve_shortcut_target_by_basename() {
   local shortcut_abs="$1"
   local base_name
@@ -655,16 +743,6 @@ fi
       font-size: 0.9rem;
       line-height: 1.3;
     }
-    .label {
-      display: inline-block;
-      color: white;
-      background: var(--accent);
-      border-radius: 999px;
-      padding: 0.15rem 0.5rem;
-      margin-bottom: 0.35rem;
-      font-size: 0.74rem;
-      letter-spacing: 0.02em;
-    }
     .path {
       word-break: break-word;
       margin: 0.2rem 0;
@@ -756,28 +834,29 @@ HTML_HEAD
       project_name="$project_path"
     fi
     project_html="$(html_escape "$project_name")"
+    project_file_summary_text="$(project_file_summary "$project_path")"
+    project_file_summary_html="$(html_escape "$project_file_summary_text")"
     if [ "$row_status" = "no_image" ]; then
       printf '      <article class="row empty">\n'
       printf '        <div class="thumb"></div>\n'
       printf '        <div class="details">\n'
-      printf '          <span class="label">No Image</span>\n'
       printf '          <div class="path"><strong>Pokemon:</strong> <code>%s</code></div>\n' "$pokemon_html"
       printf '          <div class="path"><strong>Project:</strong> <code>%s</code></div>\n' "$project_html"
+      printf '          <div class="path"><strong>Files:</strong> <code>%s</code></div>\n' "$project_file_summary_html"
       printf '        </div>\n'
       printf '      </article>\n'
       continue
     fi
 
     photo_html="$(html_escape "$photo_asset_path")"
-    status_html="$(html_escape "$row_status")"
     printf '      <article class="row">\n'
     printf '        <button class="thumb-button" type="button" data-full="%s" data-alt="%s" aria-label="Open image preview">\n' "$photo_html" "$project_html"
     printf '          <img class="thumb" loading="lazy" src="%s" alt="%s" />\n' "$photo_html" "$project_html"
     printf '        </button>\n'
     printf '        <div class="details">\n'
-    printf '          <span class="label">%s</span>\n' "$status_html"
     printf '          <div class="path"><strong>Pokemon:</strong> <code>%s</code></div>\n' "$pokemon_html"
     printf '          <div class="path"><strong>Project:</strong> <code>%s</code></div>\n' "$project_html"
+    printf '          <div class="path"><strong>Files:</strong> <code>%s</code></div>\n' "$project_file_summary_html"
     printf '        </div>\n'
     printf '      </article>\n'
   done < <(awk -F $'\t' -v OFS="$FS" 'NR > 1 {print $1, $2, $3, $4}' "$MANIFEST_FILE" | LC_ALL=C sort -t "$FS" -k1,1)
