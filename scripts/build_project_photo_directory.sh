@@ -193,6 +193,40 @@ project_file_summary() {
         | perl -e '
             use strict;
             use warnings;
+            sub file_type_label {
+              my ($ext) = @_;
+              my %labels = (
+                stl => "STL",
+                "3mf" => "3MF",
+                obj => "OBJ",
+                step => "STEP",
+                stp => "STEP",
+                chitubox => "CHITUBOX",
+                png => "PNG",
+                jpg => "JPEG",
+                jpeg => "JPEG",
+                webp => "WebP",
+                gif => "GIF",
+                bmp => "BMP",
+                tif => "TIFF",
+                tiff => "TIFF",
+                heic => "HEIC",
+                heif => "HEIF",
+                avif => "AVIF",
+                svg => "SVG",
+                pdf => "PDF",
+                txt => "Text",
+                md => "Markdown",
+                json => "JSON",
+                csv => "CSV",
+                zip => "ZIP",
+              );
+
+              return "No ext" if $ext eq "no extension";
+              return $labels{$ext} if exists $labels{$ext};
+              return uc($ext);
+            }
+
             my %counts;
             my $total = 0;
             while (my $path = <STDIN>) {
@@ -211,7 +245,7 @@ project_file_summary() {
             print "$total total";
             if ($total > 0) {
               my @parts = map {
-                my $label = ($_ eq "no extension") ? $_ : ".$_";
+                my $label = file_type_label($_);
                 "$label: $counts{$_}"
               } sort { $counts{$b} <=> $counts{$a} || $a cmp $b } keys %counts;
               print " (" . join(", ", @parts) . ")";
@@ -234,6 +268,40 @@ project_file_summary() {
       | perl -e '
           use strict;
           use warnings;
+          sub file_type_label {
+            my ($ext) = @_;
+            my %labels = (
+              stl => "STL",
+              "3mf" => "3MF",
+              obj => "OBJ",
+              step => "STEP",
+              stp => "STEP",
+              chitubox => "CHITUBOX",
+              png => "PNG",
+              jpg => "JPEG",
+              jpeg => "JPEG",
+              webp => "WebP",
+              gif => "GIF",
+              bmp => "BMP",
+              tif => "TIFF",
+              tiff => "TIFF",
+              heic => "HEIC",
+              heif => "HEIF",
+              avif => "AVIF",
+              svg => "SVG",
+              pdf => "PDF",
+              txt => "Text",
+              md => "Markdown",
+              json => "JSON",
+              csv => "CSV",
+              zip => "ZIP",
+            );
+
+            return "No ext" if $ext eq "no extension";
+            return $labels{$ext} if exists $labels{$ext};
+            return uc($ext);
+          }
+
           my %counts;
           my $total = 0;
           while (my $path = <STDIN>) {
@@ -252,7 +320,7 @@ project_file_summary() {
           print "$total total";
           if ($total > 0) {
             my @parts = map {
-              my $label = ($_ eq "no extension") ? $_ : ".$_";
+              my $label = file_type_label($_);
               "$label: $counts{$_}"
             } sort { $counts{$b} <=> $counts{$a} || $a cmp $b } keys %counts;
             print " (" . join(", ", @parts) . ")";
@@ -385,7 +453,7 @@ OUTPUT_DIR_ABS="$SORTED_DIR_ABS/$OUTPUT_DIR_NAME"
 IMAGES_DIR_ABS="$OUTPUT_DIR_ABS/images"
 REPORTS_DIR_ABS="$OUTPUT_DIR_ABS/_reports"
 MANIFEST_FILE="$REPORTS_DIR_ABS/photo_manifest.tsv"
-HTML_INDEX_FILE="$OUTPUT_DIR_ABS/index.html"
+HTML_INDEX_FILE="$OUTPUT_DIR_ABS/Directory.html"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/build-photo-directory.XXXXXX")"
 cleanup() {
@@ -666,7 +734,7 @@ fi
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pokemon Photo Directory</title>
+  <title>MyPokePrints Photo Directory</title>
   <style>
     :root {
       --bg: #f5f2ea;
@@ -810,7 +878,7 @@ HTML_HEAD
 
   selected_count="$(awk -F $'\t' 'NR>1 && $4 != "no_image" {count++} END {print count+0}' "$MANIFEST_FILE")"
   missing_count="$(awk -F $'\t' 'NR>1 && $4 == "no_image" {count++} END {print count+0}' "$MANIFEST_FILE")"
-  printf '    <h1>Pokemon Photo Directory</h1>\n'
+  printf '    <h1>MyPokePrints Photo Directory</h1>\n'
   printf '    <p class="meta">Selected images: %s | Projects without image: %s</p>\n' "$selected_count" "$missing_count"
 
   current_pokemon=""
