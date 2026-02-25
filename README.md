@@ -1,5 +1,9 @@
 # PokePrint Organizer
 
+![Platform macOS](https://img.shields.io/badge/platform-macOS-black)
+![Shell Bash](https://img.shields.io/badge/shell-bash-4EAA25)
+[![License MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Shell scripts for organizing Pokemon 3D-print project folders, standardizing names, and generating a browsable photo directory.
 
 ## What this does
@@ -9,6 +13,33 @@ Shell scripts for organizing Pokemon 3D-print project folders, standardizing nam
 - Normalizes folder/file naming in sorted output.
 - Applies a readability pass to internal names.
 - Generates a photo directory (`Directory.html`) with one preferred image per project.
+
+## Example transformation
+
+Input layout (`To Sort`):
+
+```text
+To Sort/
+├── January 2026 - Pikachu Statue/
+├── Eevee Pikachu Diorama/
+└── Charizard Bust/
+```
+
+Sorted output (`Sorted by Pokemon`):
+
+```text
+Sorted by Pokemon/
+├── Pikachu/
+│   ├── January 2026 - Pikachu Statue/
+│   └── Eevee Pikachu Diorama              # canonical OR shortcut
+├── Eevee/
+│   └── Eevee Pikachu Diorama              # canonical OR shortcut
+├── Charizard/
+│   └── Charizard Bust/
+└── _reports/
+```
+
+For multi-Pokemon projects, the scripts create one canonical project folder and place shortcuts (Finder aliases or symlinks) in other matching Pokemon folders.
 
 ## Requirements
 
@@ -181,6 +212,14 @@ Key options:
 - `Sorted by Pokemon/_reports/name_humanize_internal_renames.tsv`
 - `Sorted by Pokemon/_photo_directory/Directory.html`
 - `Sorted by Pokemon/_photo_directory/_reports/photo_manifest.tsv`
+
+## Contributing
+
+1. Open an issue first for large behavior changes.
+2. Keep dependencies native and script-first (no additional frameworks/tools without discussion).
+3. Validate changes with `--dry-run` before `--apply`.
+4. Include a small sample input/output tree in PR notes for behavior changes.
+5. Update `README.md` and script `--help` text together when flags or defaults change.
 
 ## License
 
