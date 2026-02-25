@@ -84,6 +84,7 @@ Build/update the photo directory:
 ```bash
 ./scripts/build_project_photo_directory.sh \
   --sorted-dir "/path/to/Sorted by Pokemon" \
+  --output-root "/path/to/photo-directory" \
   --apply
 ```
 
@@ -106,6 +107,7 @@ Build/update the photo directory:
 - Writes/merges `photo_manifest.tsv` based on `--manifest-mode`:
   - `append` (default): keep old rows not seen in current scan.
   - `rewrite`: only current scan entries.
+- Stores per-project file metadata in `photo_manifest.tsv` (`project_file_total`, `project_file_summary`) so `Directory.html` can render without rescanning source folders.
 - Rebuilds `Directory.html` on each apply using merged manifest rows.
 
 Use a full rebuild only when needed:
@@ -113,6 +115,19 @@ Use a full rebuild only when needed:
 ```bash
 ./scripts/build_project_photo_directory.sh \
   --sorted-dir "/path/to/Sorted by Pokemon" \
+  --output-root "/path/to/photo-directory" \
+  --replace \
+  --manifest-mode rewrite \
+  --apply
+```
+
+Recommended for a standalone archive snapshot (independent files + refreshed manifest):
+
+```bash
+./scripts/build_project_photo_directory.sh \
+  --sorted-dir "/path/to/Sorted by Pokemon" \
+  --output-root "/path/to/photo-directory" \
+  --link-mode copy \
   --replace \
   --manifest-mode rewrite \
   --apply
@@ -199,6 +214,7 @@ Key options:
 
 - `--sorted-dir <path>`
 - `--output-dir <name>` (default: `_photo_directory`)
+- `--output-root <path>` (overrides `--output-dir`)
 - `--dry-run | --apply`
 - `--link-mode hardlink|symlink|copy` (default: `hardlink`)
 - `--manifest-mode append|rewrite` (default: `append`)

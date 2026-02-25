@@ -6,11 +6,12 @@ usage() {
 Build a photo directory by selecting a preferred image from each sorted project.
 
 Usage:
-  build_project_photo_directory.sh [--sorted-dir <path>] [--output-dir <name>] [--dry-run|--apply] [--link-mode <hardlink|symlink|copy>] [--manifest-mode <append|rewrite>] [--replace] [--verbose]
+  build_project_photo_directory.sh [--sorted-dir <path>] [--output-dir <name>] [--output-root <path>] [--dry-run|--apply] [--link-mode <hardlink|symlink|copy>] [--manifest-mode <append|rewrite>] [--replace] [--verbose]
 
 Options:
   --sorted-dir <path>  Sorted root directory. Default: ./Sorted by Pokemon
   --output-dir <name>  Output folder inside sorted dir. Default: _photo_directory
+  --output-root <path> Absolute/relative output path. Overrides --output-dir
   --dry-run            Plan only (default)
   --apply              Upsert assets and regenerate index from merged manifest rows
   --link-mode <mode>   How images are placed in output: hardlink, symlink, copy (default: hardlink)
@@ -35,6 +36,10 @@ relative_path() {
 resolve_abs_path() {
   local path="$1"
   perl -MCwd=abs_path -e 'my $p = abs_path($ARGV[0]); print $p if defined $p' "$path"
+}
+
+to_abs_path() {
+  perl -MFile::Spec -e 'print File::Spec->rel2abs($ARGV[0])' "$1"
 }
 
 resolve_finder_alias_target() {
@@ -67,6 +72,10 @@ html_escape() {
     $s =~ s/"/&quot;/g;
     print $s;
   ' "$1"
+}
+
+sanitize_manifest_field() {
+  printf '%s' "${1:-}" | tr '\t\r\n' '   '
 }
 
 slugify() {
@@ -384,6 +393,7 @@ VERBOSE=0
 REPLACE=0
 SORTED_DIR="./Sorted by Pokemon"
 OUTPUT_DIR_NAME="_photo_directory"
+OUTPUT_ROOT_OVERRIDE=""
 LINK_MODE="hardlink"
 MANIFEST_MODE="append"
 HAS_OSASCRIPT=0
@@ -399,6 +409,11 @@ while [ "$#" -gt 0 ]; do
       shift
       [ "$#" -gt 0 ] || err "--output-dir requires a value"
       OUTPUT_DIR_NAME="$1"
+      ;;
+    --output-root)
+      shift
+      [ "$#" -gt 0 ] || err "--output-root requires a value"
+      OUTPUT_ROOT_OVERRIDE="$1"
       ;;
     --dry-run)
       MODE="dry-run"
@@ -449,7 +464,20 @@ done
 
 [ -d "$SORTED_DIR" ] || err "Sorted directory not found: $SORTED_DIR"
 SORTED_DIR_ABS="$(cd "$SORTED_DIR" && pwd)"
-OUTPUT_DIR_ABS="$SORTED_DIR_ABS/$OUTPUT_DIR_NAME"
+if [ -n "$OUTPUT_ROOT_OVERRIDE" ]; then
+  OUTPUT_DIR_ABS="$(to_abs_path "$OUTPUT_ROOT_OVERRIDE")"
+else
+  OUTPUT_DIR_ABS="$SORTED_DIR_ABS/$OUTPUT_DIR_NAME"
+fi
+if [ "$OUTPUT_DIR_ABS" = "$SORTED_DIR_ABS" ]; then
+  err "Output path cannot be the same as sorted directory: $OUTPUT_DIR_ABS"
+fi
+OUTPUT_ROOT_WITHIN_SORTED=0
+case "$OUTPUT_DIR_ABS" in
+  "$SORTED_DIR_ABS"/*)
+    OUTPUT_ROOT_WITHIN_SORTED=1
+    ;;
+esac
 IMAGES_DIR_ABS="$OUTPUT_DIR_ABS/images"
 REPORTS_DIR_ABS="$OUTPUT_DIR_ABS/_reports"
 MANIFEST_FILE="$REPORTS_DIR_ABS/photo_manifest.tsv"
@@ -466,22 +494,42 @@ PROJECTS_FILE="$TMP_DIR/projects.txt"
 PLAN_FILE="$TMP_DIR/plan.tsv"
 ALIAS_CANDIDATES_FILE="$TMP_DIR/alias_candidates.txt"
 CANONICAL_PROJECT_DIRS_FILE="$TMP_DIR/canonical_projects.txt"
+CANONICAL_PROJECTS_RAW_FILE="$TMP_DIR/canonical_projects_raw.txt"
 
 if command -v osascript >/dev/null 2>&1; then
   HAS_OSASCRIPT=1
 fi
 
-find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type d | LC_ALL=C sort > "$CANONICAL_PROJECT_DIRS_FILE"
+is_within_output_root() {
+  local path_abs="$1"
+  [ "$OUTPUT_ROOT_WITHIN_SORTED" -eq 1 ] || return 1
+  case "$path_abs" in
+    "$OUTPUT_DIR_ABS"|"${OUTPUT_DIR_ABS}"/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type d | LC_ALL=C sort > "$CANONICAL_PROJECTS_RAW_FILE"
+: > "$CANONICAL_PROJECT_DIRS_FILE"
+while IFS= read -r canonical_abs; do
+  [ -n "$canonical_abs" ] || continue
+  is_within_output_root "$canonical_abs" && continue
+  printf '%s\n' "$canonical_abs" >> "$CANONICAL_PROJECT_DIRS_FILE"
+done < "$CANONICAL_PROJECTS_RAW_FILE"
 cp "$CANONICAL_PROJECT_DIRS_FILE" "$PROJECTS_FILE"
 find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type l | LC_ALL=C sort >> "$PROJECTS_FILE"
 
 find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type f | LC_ALL=C sort > "$ALIAS_CANDIDATES_FILE"
 while IFS= read -r alias_abs; do
   [ -n "$alias_abs" ] || continue
+  is_within_output_root "$alias_abs" && continue
   alias_rel="${alias_abs#$SORTED_DIR_ABS/}"
   alias_pokemon="${alias_rel%%/*}"
   [ "$alias_pokemon" != "_reports" ] || continue
-  [ "$alias_pokemon" != "$OUTPUT_DIR_NAME" ] || continue
 
   alias_target=""
   if [ "$HAS_OSASCRIPT" -eq 1 ]; then
@@ -505,9 +553,9 @@ done < "$ALIAS_CANDIDATES_FILE"
 
 while IFS= read -r pokemon_abs; do
   [ -n "$pokemon_abs" ] || continue
+  is_within_output_root "$pokemon_abs" && continue
   pokemon_name="$(basename "$pokemon_abs")"
   [ "$pokemon_name" != "_reports" ] || continue
-  [ "$pokemon_name" != "$OUTPUT_DIR_NAME" ] || continue
   # Include base Pokemon folder only if it contains direct files.
   if has_base_folder_assets "$pokemon_abs"; then
     printf '%s\n' "$pokemon_abs" >> "$PROJECTS_FILE"
@@ -525,6 +573,7 @@ sequence=1
 
 while IFS= read -r project_abs; do
   [ -n "$project_abs" ] || continue
+  is_within_output_root "$project_abs" && continue
   project_rel="${project_abs#$SORTED_DIR_ABS/}"
   pokemon="${project_rel%%/*}"
   [ "$pokemon" != "_reports" ] || continue
@@ -539,6 +588,12 @@ while IFS= read -r project_abs; do
   fi
 
   project_total=$((project_total + 1))
+  project_file_summary_text="$(project_file_summary "$project_rel")"
+  project_file_summary_text="$(sanitize_manifest_field "$project_file_summary_text")"
+  project_file_total="${project_file_summary_text%% total*}"
+  if ! [[ "$project_file_total" =~ ^[0-9]+$ ]]; then
+    project_file_total="0"
+  fi
 
   if [ "$project_rel" = "$pokemon" ]; then
     # Base Pokemon folder candidate; only check direct files to avoid
@@ -554,8 +609,8 @@ while IFS= read -r project_abs; do
   fi
 
   if [ -z "$first_image" ]; then
-    printf '%s%s%s%s%s%s%s%s%s\n' \
-      "$project_rel" "$FS" "-" "$FS" "-" "$FS" "-" "$FS" "no_image" >> "$PLAN_FILE"
+    printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+      "$project_rel" "$FS" "-" "$FS" "-" "$FS" "-" "$FS" "no_image" "$FS" "$project_file_total" "$FS" "$project_file_summary_text" >> "$PLAN_FILE"
     missing_total=$((missing_total + 1))
     continue
   fi
@@ -575,8 +630,8 @@ while IFS= read -r project_abs; do
   output_name="${project_slug}.${ext}"
   output_rel="images/$pokemon_slug/$output_name"
 
-  printf '%s%s%s%s%s%s%s%s%s\n' \
-    "$project_rel" "$FS" "$source_rel" "$FS" "$output_rel" "$FS" "$first_image" "$FS" "selected" >> "$PLAN_FILE"
+  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$project_rel" "$FS" "$source_rel" "$FS" "$output_rel" "$FS" "$first_image" "$FS" "selected" "$FS" "$project_file_total" "$FS" "$project_file_summary_text" >> "$PLAN_FILE"
 
   selected_total=$((selected_total + 1))
   sequence=$((sequence + 1))
@@ -595,12 +650,12 @@ echo "Projects ignored (support folders): $ignored_total"
 if [ "$VERBOSE" -eq 1 ] || [ "$MODE" = "dry-run" ]; then
   echo
   echo "Plan:"
-  while IFS="$FS" read -r project_rel source_rel output_rel _source_abs status; do
+  while IFS="$FS" read -r project_rel source_rel output_rel _source_abs status project_file_total project_file_summary_text; do
     [ -n "$project_rel" ] || continue
     if [ "$status" = "selected" ]; then
-      echo "SELECT: $project_rel -> $source_rel => $output_rel"
+      echo "SELECT: $project_rel -> $source_rel => $output_rel | Files: $project_file_summary_text"
     else
-      echo "NO IMAGE: $project_rel"
+      echo "NO IMAGE: $project_rel | Files: $project_file_summary_text"
     fi
   done < <(LC_ALL=C sort -t "$FS" -k1,1 "$PLAN_FILE")
 fi
@@ -635,13 +690,25 @@ MERGED_MANIFEST_ROWS_FILE="$TMP_DIR/merged_manifest_rows.tsv"
 : > "$MERGED_MANIFEST_ROWS_FILE"
 
 if [ "$REPLACE" -eq 0 ] && [ -f "$MANIFEST_FILE" ]; then
-  awk -F $'\t' 'NR > 1 && $1 != "" { print $0 }' "$MANIFEST_FILE" > "$EXISTING_MANIFEST_ROWS_FILE"
+  awk -F $'\t' -v OFS=$'\t' '
+    NR == 1 { next }
+    $1 == "" { next }
+    {
+      project_path = $1
+      source_image_path = $2
+      photo_asset_path = $3
+      status = $4
+      project_file_total = $5
+      project_file_summary = $6
+      print project_path, source_image_path, photo_asset_path, status, project_file_total, project_file_summary
+    }
+  ' "$MANIFEST_FILE" > "$EXISTING_MANIFEST_ROWS_FILE"
 fi
 
-while IFS="$FS" read -r project_rel source_rel output_rel source_abs status; do
+while IFS="$FS" read -r project_rel source_rel output_rel source_abs status project_file_total project_file_summary_text; do
   [ -n "$project_rel" ] || continue
   if [ "$status" != "selected" ]; then
-    printf '%s\t%s\t%s\t%s\n' "$project_rel" "" "" "$status" >> "$CURRENT_MANIFEST_ROWS_FILE"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$project_rel" "" "" "$status" "$project_file_total" "$project_file_summary_text" >> "$CURRENT_MANIFEST_ROWS_FILE"
     continue
   fi
 
@@ -687,7 +754,7 @@ while IFS="$FS" read -r project_rel source_rel output_rel source_abs status; do
   fi
 
   if [ "$skip_update" -eq 1 ]; then
-    printf '%s\t%s\t%s\t%s\n' "$project_rel" "$source_rel" "$output_rel" "$placed_status" >> "$CURRENT_MANIFEST_ROWS_FILE"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$project_rel" "$source_rel" "$output_rel" "$placed_status" "$project_file_total" "$project_file_summary_text" >> "$CURRENT_MANIFEST_ROWS_FILE"
     continue
   fi
 
@@ -709,7 +776,7 @@ while IFS="$FS" read -r project_rel source_rel output_rel source_abs status; do
 		;;
 	esac
 
-  printf '%s\t%s\t%s\t%s\n' "$project_rel" "$source_rel" "$output_rel" "$placed_status" >> "$CURRENT_MANIFEST_ROWS_FILE"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$project_rel" "$source_rel" "$output_rel" "$placed_status" "$project_file_total" "$project_file_summary_text" >> "$CURRENT_MANIFEST_ROWS_FILE"
 done < "$PLAN_FILE"
 
 if [ "$MANIFEST_MODE" = "append" ] && [ "$REPLACE" -eq 0 ] && [ -s "$EXISTING_MANIFEST_ROWS_FILE" ]; then
@@ -722,7 +789,7 @@ else
   cp "$CURRENT_MANIFEST_ROWS_FILE" "$MERGED_MANIFEST_ROWS_FILE"
 fi
 
-printf 'project_path\tsource_image_path\tphoto_asset_path\tstatus\n' > "$MANIFEST_FILE"
+printf 'project_path\tsource_image_path\tphoto_asset_path\tstatus\tproject_file_total\tproject_file_summary\n' > "$MANIFEST_FILE"
 if [ -s "$MERGED_MANIFEST_ROWS_FILE" ]; then
   LC_ALL=C sort -t $'\t' -k1,1 "$MERGED_MANIFEST_ROWS_FILE" >> "$MANIFEST_FILE"
 fi
@@ -826,19 +893,19 @@ fi
     body.lightbox-open {
       overflow: hidden;
     }
-    .lightbox[hidden] {
-      display: none;
-    }
     .lightbox {
       position: fixed;
       inset: 0;
       z-index: 9999;
       background: rgba(16, 12, 8, 0.82);
-      display: flex;
+      display: none;
       align-items: center;
       justify-content: center;
       flex-direction: column;
       padding: 1rem;
+    }
+    .lightbox.is-open {
+      display: flex;
     }
     .lightbox-image {
       max-width: min(96vw, 1400px);
@@ -878,11 +945,15 @@ HTML_HEAD
 
   selected_count="$(awk -F $'\t' 'NR>1 && $4 != "no_image" {count++} END {print count+0}' "$MANIFEST_FILE")"
   missing_count="$(awk -F $'\t' 'NR>1 && $4 == "no_image" {count++} END {print count+0}' "$MANIFEST_FILE")"
+  indexed_file_count="$(awk -F $'\t' 'NR>1 && $5 ~ /^[0-9]+$/ {sum+=$5} END {print sum+0}' "$MANIFEST_FILE")"
   printf '    <h1>MyPokePrints Photo Directory</h1>\n'
-  printf '    <p class="meta">Selected images: %s | Projects without image: %s</p>\n' "$selected_count" "$missing_count"
+  printf '    <p class="meta">Selected images: %s | Projects without image: %s | Indexed files: %s</p>\n' "$selected_count" "$missing_count" "$indexed_file_count"
+  if [ "$selected_count" -eq 0 ]; then
+    printf '    <p class="meta">No preview images were indexed. Verify <code>--sorted-dir</code> and rerun with <code>--apply</code>.</p>\n'
+  fi
 
   current_pokemon=""
-  while IFS="$FS" read -r project_path source_image_path photo_asset_path row_status; do
+  while IFS="$FS" read -r project_path source_image_path photo_asset_path row_status project_file_total project_file_summary_text; do
     [ -n "$project_path" ] || continue
 
     pokemon_name="${project_path%%/*}"
@@ -902,7 +973,12 @@ HTML_HEAD
       project_name="$project_path"
     fi
     project_html="$(html_escape "$project_name")"
-    project_file_summary_text="$(project_file_summary "$project_path")"
+    if [ -z "$project_file_summary_text" ] && [ -n "$project_file_total" ]; then
+      project_file_summary_text="${project_file_total} total"
+    fi
+    if [ -z "$project_file_summary_text" ]; then
+      project_file_summary_text="Not captured (rerun with --apply to refresh)"
+    fi
     project_file_summary_html="$(html_escape "$project_file_summary_text")"
     if [ "$row_status" = "no_image" ]; then
       printf '      <article class="row empty">\n'
@@ -927,15 +1003,16 @@ HTML_HEAD
     printf '          <div class="path"><strong>Files:</strong> <code>%s</code></div>\n' "$project_file_summary_html"
     printf '        </div>\n'
     printf '      </article>\n'
-  done < <(awk -F $'\t' -v OFS="$FS" 'NR > 1 {print $1, $2, $3, $4}' "$MANIFEST_FILE" | LC_ALL=C sort -t "$FS" -k1,1)
+  done < <(awk -F $'\t' -v OFS="$FS" 'NR > 1 {print $1, $2, $3, $4, $5, $6}' "$MANIFEST_FILE" | LC_ALL=C sort -t "$FS" -k1,1)
 
   if [ -n "$current_pokemon" ]; then
     printf '    </div>\n'
   fi
 
+  if [ "$selected_count" -gt 0 ]; then
   cat <<'HTML_FOOT'
   </main>
-  <div id="lightbox" class="lightbox" hidden>
+  <div id="lightbox" class="lightbox" aria-hidden="true">
     <button id="lightbox-close" class="lightbox-close" type="button" aria-label="Close image preview">&times;</button>
     <img id="lightbox-image" class="lightbox-image" alt="" />
     <p id="lightbox-caption" class="lightbox-caption"></p>
@@ -954,12 +1031,14 @@ HTML_HEAD
         lightboxImage.src = src;
         lightboxImage.alt = alt || "";
         lightboxCaption.textContent = alt || "";
-        lightbox.hidden = false;
+        lightbox.classList.add("is-open");
+        lightbox.setAttribute("aria-hidden", "false");
         document.body.classList.add("lightbox-open");
       };
 
       const closeLightbox = () => {
-        lightbox.hidden = true;
+        lightbox.classList.remove("is-open");
+        lightbox.setAttribute("aria-hidden", "true");
         lightboxImage.removeAttribute("src");
         lightboxImage.alt = "";
         lightboxCaption.textContent = "";
@@ -980,7 +1059,7 @@ HTML_HEAD
       });
 
       document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && !lightbox.hidden) {
+        if (event.key === "Escape" && lightbox.classList.contains("is-open")) {
           closeLightbox();
         }
       });
@@ -989,6 +1068,13 @@ HTML_HEAD
 </body>
 </html>
 HTML_FOOT
+  else
+  cat <<'HTML_FOOT_EMPTY'
+  </main>
+</body>
+</html>
+HTML_FOOT_EMPTY
+  fi
 } > "$HTML_INDEX_FILE"
 
 echo
