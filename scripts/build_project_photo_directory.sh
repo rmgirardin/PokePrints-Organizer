@@ -836,6 +836,31 @@ fi
       margin: 0 0 1.2rem;
       color: var(--muted);
     }
+    .search-wrap {
+      display: grid;
+      gap: 0.35rem;
+      margin: 0 0 1.2rem;
+    }
+    .search-input {
+      width: min(560px, 100%);
+      font: inherit;
+      color: var(--ink);
+      background: #fffdf9;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0.55rem 0.75rem;
+    }
+    .search-input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .search-meta {
+      margin: 0;
+      font-size: 0.85rem;
+    }
+    .is-hidden {
+      display: none !important;
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
@@ -948,6 +973,10 @@ HTML_HEAD
   indexed_file_count="$(awk -F $'\t' 'NR>1 && $5 ~ /^[0-9]+$/ {sum+=$5} END {print sum+0}' "$MANIFEST_FILE")"
   printf '    <h1>MyPokePrints Photo Directory</h1>\n'
   printf '    <p class="meta">Selected images: %s | Projects without image: %s | Indexed files: %s</p>\n' "$selected_count" "$missing_count" "$indexed_file_count"
+  printf '    <section class="search-wrap">\n'
+  printf '      <input id="directory-search" class="search-input" type="search" placeholder="Search Pokemon or project" aria-label="Search Pokemon or project" autocomplete="off" />\n'
+  printf '      <p id="search-summary" class="meta search-meta" aria-live="polite"></p>\n'
+  printf '    </section>\n'
   if [ "$selected_count" -eq 0 ]; then
     printf '    <p class="meta">No preview images were indexed. Verify <code>--sorted-dir</code> and rerun with <code>--apply</code>.</p>\n'
   fi
@@ -980,8 +1009,10 @@ HTML_HEAD
       project_file_summary_text="Not captured (rerun with --apply to refresh)"
     fi
     project_file_summary_html="$(html_escape "$project_file_summary_text")"
+    search_text="$pokemon_name $project_name $project_path $project_file_summary_text"
+    search_html="$(html_escape "$search_text")"
     if [ "$row_status" = "no_image" ]; then
-      printf '      <article class="row empty">\n'
+      printf '      <article class="row empty" data-search="%s">\n' "$search_html"
       printf '        <div class="thumb"></div>\n'
       printf '        <div class="details">\n'
       printf '          <div class="path"><strong>Pokemon:</strong> <code>%s</code></div>\n' "$pokemon_html"
@@ -993,7 +1024,7 @@ HTML_HEAD
     fi
 
     photo_html="$(html_escape "$photo_asset_path")"
-    printf '      <article class="row">\n'
+    printf '      <article class="row" data-search="%s">\n' "$search_html"
     printf '        <button class="thumb-button" type="button" data-full="%s" data-alt="%s" aria-label="Open image preview">\n' "$photo_html" "$project_html"
     printf '          <img class="thumb" loading="lazy" src="%s" alt="%s" />\n' "$photo_html" "$project_html"
     printf '        </button>\n'
@@ -1010,21 +1041,67 @@ HTML_HEAD
   fi
 
   if [ "$selected_count" -gt 0 ]; then
-  cat <<'HTML_FOOT'
+  cat <<'HTML_LIGHTBOX'
   </main>
   <div id="lightbox" class="lightbox" aria-hidden="true">
     <button id="lightbox-close" class="lightbox-close" type="button" aria-label="Close image preview">&times;</button>
     <img id="lightbox-image" class="lightbox-image" alt="" />
     <p id="lightbox-caption" class="lightbox-caption"></p>
   </div>
+HTML_LIGHTBOX
+  else
+    printf '  </main>\n'
+  fi
+
+  cat <<'HTML_FOOT'
   <script>
     (() => {
+      const searchInput = document.getElementById("directory-search");
+      const searchSummary = document.getElementById("search-summary");
+      const rows = Array.from(document.querySelectorAll(".row"));
+      const pokemonHeaders = Array.from(document.querySelectorAll("main h2"));
+
+      const applyFilter = () => {
+        const query = searchInput ? searchInput.value.trim().toLocaleLowerCase() : "";
+        let visibleRows = 0;
+
+        rows.forEach((row) => {
+          const haystack = (row.dataset.search || "").toLocaleLowerCase();
+          const matches = query === "" || haystack.includes(query);
+          row.classList.toggle("is-hidden", !matches);
+          if (matches) {
+            visibleRows += 1;
+          }
+        });
+
+        pokemonHeaders.forEach((header) => {
+          const grid = header.nextElementSibling;
+          if (!grid || !grid.classList.contains("grid")) {
+            return;
+          }
+          const hasVisibleRows = grid.querySelector(".row:not(.is-hidden)") !== null;
+          header.classList.toggle("is-hidden", !hasVisibleRows);
+          grid.classList.toggle("is-hidden", !hasVisibleRows);
+        });
+
+        if (searchSummary) {
+          searchSummary.textContent = query === ""
+            ? `Showing all ${visibleRows} projects`
+            : `Showing ${visibleRows} matching projects`;
+        }
+      };
+
+      if (searchInput) {
+        searchInput.addEventListener("input", applyFilter);
+      }
+      applyFilter();
+
       const lightbox = document.getElementById("lightbox");
       const lightboxImage = document.getElementById("lightbox-image");
       const lightboxCaption = document.getElementById("lightbox-caption");
       const closeButton = document.getElementById("lightbox-close");
-      const openers = document.querySelectorAll(".thumb-button");
-      if (!lightbox || !lightboxImage || !lightboxCaption || !closeButton) return;
+      const openers = Array.from(document.querySelectorAll(".thumb-button"));
+      if (!lightbox || !lightboxImage || !lightboxCaption || !closeButton || openers.length === 0) return;
 
       const openLightbox = (src, alt) => {
         if (!src) return;
@@ -1068,13 +1145,6 @@ HTML_HEAD
 </body>
 </html>
 HTML_FOOT
-  else
-  cat <<'HTML_FOOT_EMPTY'
-  </main>
-</body>
-</html>
-HTML_FOOT_EMPTY
-  fi
 } > "$HTML_INDEX_FILE"
 
 echo
