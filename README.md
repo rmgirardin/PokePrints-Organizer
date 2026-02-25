@@ -1,159 +1,187 @@
-# Pokemon Print Sorting Guide
+# PokePrint Organizer
 
-This repo provides scripts to sort monthly Pokemon 3D projects into Pokemon folders, add shortcuts for multi-Pokemon projects, clean naming, and generate a photo index.
+Shell scripts for organizing Pokemon 3D-print project folders, standardizing names, and generating a browsable photo directory.
 
-## Default Monthly Workflow
+## What this does
 
-Default source:
+- Sorts project folders into Pokemon-centric directories.
+- Creates shortcuts for multi-Pokemon projects (`alias` or `symlink`).
+- Normalizes folder/file naming in sorted output.
+- Applies a readability pass to internal names.
+- Generates a photo directory (`Directory.html`) with one preferred image per project.
 
-- `~/Documents/Projects/3D Printer/CAD/MyPokePrints/To Sort`
+## Requirements
 
-Default destination root:
+- macOS (Finder aliases use `osascript`).
+- `bash`, `perl`, and standard Unix utilities (`find`, `awk`, `sed`, `sort`, `stat`, `ln`, `cp`, `mv`).
+- If you want cross-platform-like shortcut behavior, use `--shortcut-type symlink` instead of Finder aliases.
 
-- `~/Documents/Projects/3D Printer/CAD/MyPokePrints`
+## Repository layout
 
-Run from any folder (paths are explicit):
+- `scripts/run_pokemon_pipeline.sh`: End-to-end runner (sort + normalize + humanize).
+- `scripts/sort_pokemon_models.sh`: Stage 1 only (sorting + shortcut creation + manifest).
+- `scripts/normalize_sorted_names.sh`: Stage 2 only (project/folder normalization + shortcut recreation).
+- `scripts/humanize_sorted_names.sh`: Stage 3 only (readability cleanup).
+- `scripts/build_project_photo_directory.sh`: Builds gallery assets and HTML directory.
+- `scripts/data/pokedex_token_stream.txt`: Pokemon token catalog used for matching.
+- `scripts/data/pokemon_aliases.tsv`: Alias mappings for name detection.
+
+## Quick start
+
+From the repository root:
 
 ```bash
-"/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints/To Sort/scripts/run_pokemon_pipeline.sh" \
-  --base-dir "/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints/To Sort" \
-  --output-root "/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints" \
+./scripts/run_pokemon_pipeline.sh \
+  --base-dir "/path/to/To Sort" \
+  --output-root "/path/to/Sorted by Pokemon" \
   --dry-run \
   --verbose
 ```
 
-Then apply:
+Apply changes:
 
 ```bash
-"/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints/To Sort/scripts/run_pokemon_pipeline.sh" \
-  --base-dir "/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints/To Sort" \
-  --output-root "/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints" \
+./scripts/run_pokemon_pipeline.sh \
+  --base-dir "/path/to/To Sort" \
+  --output-root "/path/to/Sorted by Pokemon" \
   --apply
 ```
 
-Build the photo directory after sorting:
+Build/update the photo directory:
 
 ```bash
-"$HOME/Documents/Projects/3D Printer/CAD/MyPokePrints/To Sort/scripts/build_project_photo_directory.sh" \
-  --sorted-dir "$HOME/Documents/Projects/3D Printer/CAD/MyPokePrints/Directory" \
-  --link-mode copy \
+./scripts/build_project_photo_directory.sh \
+  --sorted-dir "/path/to/Sorted by Pokemon" \
   --apply
 ```
 
-Default behavior with `--apply` is incremental: new projects are added and existing project photo assets are updated as needed.
+## Safety and behavior notes
 
-By default, manifest mode is append, so existing entries that are not present in the current scan are kept in the gallery.
+- `--dry-run` is the default for all scripts.
+- Existing destination folders are reused; project folders are never merged.
+- Name collisions are auto-resolved with ` (Variant N)` suffixes.
+- If `--output-root` contains `--base-dir`, pipeline Stage 2 and Stage 3 are auto-skipped for safety.
+- Stage 2 and Stage 3 should be run on a dedicated sorted root.
 
-`index.html` is regenerated each run from the merged manifest (this is expected), so it reflects both newly scanned projects and previously retained entries.
+## Photo directory behavior
 
-Use `--manifest-mode rewrite` when you want the manifest and gallery to include only the current scan.
+`build_project_photo_directory.sh`:
 
-Use `--replace` only when you want to fully rebuild `_photo_directory` from scratch (assets + manifest + index).
+- Works incrementally by default.
+- Chooses preferred preview images (favoring names that include `Color` and/or `1`).
+- Resolves both symlink and Finder alias project shortcuts.
+- Skips support-only project names (for example `FDM`, `Single Material`, `Supported`).
+- Writes/merges `photo_manifest.tsv` based on `--manifest-mode`:
+  - `append` (default): keep old rows not seen in current scan.
+  - `rewrite`: only current scan entries.
+- Rebuilds `Directory.html` on each apply using merged manifest rows.
 
-## What Happens With Existing Destination Folders
-
-Preferred monthly behavior is enabled:
-
-- Projects are moved into existing Pokemon folders under destination root.
-- Existing Pokemon folders are reused (no need to manually recreate them).
-- Project folders are never merged together.
-- If a project folder name already exists, a new separate folder is created with ` (Variant N)` suffix.
-- Existing content is not overwritten.
-
-Example:
-
-- Existing: `Pikachu/January 2026 - Pikachu Statue`
-- New colliding project becomes: `Pikachu/January 2026 - Pikachu Statue (Variant 2)`
-
-## Important Safety Note For This Layout
-
-When destination root contains source folder (like `MyPokePrints/To Sort`), `run_pokemon_pipeline.sh` auto-skips Stage 2 and Stage 3 (normalize/humanize) for safety.
-
-This prevents rename scripts from touching unrelated folders in the destination root.
-
-If you want Stage 2/3 naming cleanup, use a dedicated output root (example: `MyPokePrints/Sorted by Pokemon`) instead of the parent root.
-
-## Script Reference
-
-### `scripts/run_pokemon_pipeline.sh`
-
-End-to-end runner.
-
-Key flags:
-
-- `--base-dir <path>`
-- `--output-dir <name>` (destination under base dir)
-- `--output-root <path>` (absolute/relative destination root; overrides `--output-dir`)
-- `--dry-run` or `--apply`
-- `--transfer-mode move|copy` (default `move`)
-- `--shortcut-type alias|symlink` (default `alias`)
-- `--verbose`
-
-### `scripts/sort_pokemon_models.sh`
-
-Stage 1 only (sorting + shortcuts + manifest).
-
-Key flags:
-
-- `--base-dir <path>`
-- `--output-root <path>` or `--output-dir <name>`
-- `--dry-run` or `--apply`
-- `--transfer-mode move|copy`
-- `--shortcut-type alias|symlink`
-- `--verbose`
-
-### `scripts/normalize_sorted_names.sh`
-
-Stage 2 naming normalization (use only on a dedicated sorted root).
-
-### `scripts/humanize_sorted_names.sh`
-
-Stage 3 readability pass (use only on a dedicated sorted root).
-
-### `scripts/build_project_photo_directory.sh`
-
-Builds one-image-per-project gallery from a sorted root.
-
-Behavior:
-
-- Incremental by default (does not require rebuild each run).
-- Groups photo assets by Pokemon under `_photo_directory/images/<pokemon>/...`.
-- Sorts gallery by Pokemon, then project.
-- Prefers `Color` + `1` images when choosing the project preview image.
-- Includes project shortcuts (`alias` and `symlink`) by resolving them to their canonical project folders.
-- Includes base Pokemon folder entries only when that folder has direct files (ignored when it only contains project subfolders).
-- Skips support-only project folders by name (for example: `Single Material`, `Multimaterial`, `Presupported`, `FDM`, `Supported`, `Hinge`).
-- Keeps existing manifest rows by default for projects not seen in the current scan (`--manifest-mode append`).
-- Rewrites `_photo_directory/index.html` on each apply from the merged manifest so new and existing entries stay in one consistent gallery.
-
-Example:
+Use a full rebuild only when needed:
 
 ```bash
-"/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints/To Sort/scripts/build_project_photo_directory.sh" \
-  --sorted-dir "/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints/Sorted by Pokemon" \
-  --apply
-```
-
-Rewrite manifest/index to current scan only:
-
-```bash
-"/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints/To Sort/scripts/build_project_photo_directory.sh" \
-  --sorted-dir "/Users/richgirardin/Documents/Projects/3D Printer/CAD/MyPokePrints/Sorted by Pokemon" \
+./scripts/build_project_photo_directory.sh \
+  --sorted-dir "/path/to/Sorted by Pokemon" \
+  --replace \
   --manifest-mode rewrite \
   --apply
 ```
 
-Key flags:
+## Script reference
 
-- `--sorted-dir <path>`
-- `--output-dir <name>` (default `_photo_directory`)
-- `--dry-run` or `--apply`
-- `--link-mode hardlink|symlink|copy` (default `hardlink`)
-- `--manifest-mode append|rewrite` (default `append`)
-- `--replace` (opt-in full rebuild of `_photo_directory`)
+### `run_pokemon_pipeline.sh`
+
+Usage:
+
+```bash
+./scripts/run_pokemon_pipeline.sh [options]
+```
+
+Key options:
+
+- `--base-dir <path>`
+- `--output-dir <name>`
+- `--output-root <path>` (overrides `--output-dir`)
+- `--dry-run | --apply`
+- `--transfer-mode move|copy` (default: `move`)
+- `--shortcut-type alias|symlink` (default: `alias`)
+- `--skip-normalize`
+- `--skip-humanize`
 - `--verbose`
 
-Outputs:
+### `sort_pokemon_models.sh`
 
-- `.../_photo_directory/index.html`
-- `.../_photo_directory/_reports/photo_manifest.tsv`
+Usage:
+
+```bash
+./scripts/sort_pokemon_models.sh [options]
+```
+
+Key options:
+
+- `--base-dir <path>`
+- `--output-dir <name>`
+- `--output-root <path>`
+- `--dry-run | --apply`
+- `--move | --copy | --transfer-mode move|copy`
+- `--shortcut-type alias|symlink`
+- `--verbose`
+
+### `normalize_sorted_names.sh`
+
+Usage:
+
+```bash
+./scripts/normalize_sorted_names.sh [options]
+```
+
+Key options:
+
+- `--sorted-dir <path>`
+- `--dry-run | --apply`
+- `--shortcut-type preserve|alias|symlink`
+- `--verbose`
+
+### `humanize_sorted_names.sh`
+
+Usage:
+
+```bash
+./scripts/humanize_sorted_names.sh [options]
+```
+
+Key options:
+
+- `--sorted-dir <path>`
+- `--dry-run | --apply`
+- `--verbose`
+
+### `build_project_photo_directory.sh`
+
+Usage:
+
+```bash
+./scripts/build_project_photo_directory.sh [options]
+```
+
+Key options:
+
+- `--sorted-dir <path>`
+- `--output-dir <name>` (default: `_photo_directory`)
+- `--dry-run | --apply`
+- `--link-mode hardlink|symlink|copy` (default: `hardlink`)
+- `--manifest-mode append|rewrite` (default: `append`)
+- `--replace`
+- `--verbose`
+
+## Output files
+
+- `Sorted by Pokemon/_reports/sort_manifest.tsv`
+- `Sorted by Pokemon/_reports/name_cleanup_project_map.tsv`
+- `Sorted by Pokemon/_reports/name_cleanup_file_renames.tsv`
+- `Sorted by Pokemon/_reports/name_humanize_internal_renames.tsv`
+- `Sorted by Pokemon/_photo_directory/Directory.html`
+- `Sorted by Pokemon/_photo_directory/_reports/photo_manifest.tsv`
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).
