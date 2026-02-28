@@ -6,7 +6,7 @@ usage() {
 Build a photo directory by selecting a preferred image from each sorted project.
 
 Usage:
-  build_project_photo_directory.sh [--sorted-dir <path>] [--output-dir <name>] [--output-root <path>] [--dry-run|--apply] [--link-mode <hardlink|symlink|copy>] [--manifest-mode <append|rewrite>] [--replace] [--verbose]
+  build_project_photo_directory.sh [--sorted-dir <path>] [--output-dir <name>] [--output-root <path>] [--dry-run|--apply] [--from-manifest|--rebuild] [--link-mode <hardlink|symlink|copy>] [--manifest-mode <append|rewrite>] [--replace] [--verbose]
 
 Options:
   --sorted-dir <path>  Sorted root directory. Default: ./Sorted by Pokemon
@@ -14,6 +14,8 @@ Options:
   --output-root <path> Absolute/relative output path. Overrides --output-dir
   --dry-run            Plan only (default)
   --apply              Upsert assets and regenerate index from merged manifest rows
+  --from-manifest      Reuse _reports/photo_manifest.tsv and skip project scanning
+  --rebuild            Shortcut for --apply --from-manifest --replace
   --link-mode <mode>   How images are placed in output: hardlink, symlink, copy (default: hardlink)
   --manifest-mode <m>  append (default): keep old entries not scanned this run; rewrite: only current scan
   --replace            Replace existing output directory before rebuilding from scratch
@@ -98,44 +100,66 @@ slugify() {
 
 select_preferred_image() {
   local project_abs="$1"
+  local preferred_name="${2:-}"
   find "$project_abs" -type f \
     \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.bmp' -o -iname '*.tif' -o -iname '*.tiff' -o -iname '*.heic' -o -iname '*.heif' -o -iname '*.avif' \) \
-    | perl -ne '
+    | PREFERRED_NAME="$preferred_name" perl -ne '
         chomp;
         my $path = $_;
         my $name = lc($path);
         $name =~ s{.*/}{};
+        my $stem = $name;
+        $stem =~ s/\.[^.]+$//;
+
+        my $preferred = lc($ENV{PREFERRED_NAME} // "");
+        $preferred =~ s/[^a-z0-9]+//g;
+        my $stem_compact = $stem;
+        $stem_compact =~ s/[^a-z0-9]+//g;
+
         my $has_color = ($name =~ /\bcolor\b/ || $name =~ /\bcol\b/);
         my $has_one = ($name =~ /(?:^|[^0-9])1(?:[^0-9]|$)/);
+        my $has_project_name = ($preferred ne "" && index($stem_compact, $preferred) >= 0);
         my $tier = 3;
         if ($has_color && $has_one) { $tier = 0; }
         elsif ($has_color) { $tier = 1; }
         elsif ($has_one) { $tier = 2; }
-        print "$tier\t$path\n";
+        my $project_name_rank = $has_project_name ? 0 : 1;
+        print "$tier\t$project_name_rank\t$path\n";
       ' \
-    | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 \
-    | sed -n '1s/^[0-9][0-9]*\t//p'
+    | LC_ALL=C sort -t $'\t' -k1,1n -k2,2n -k3,3 \
+    | sed -n '1s/^[0-9][0-9]*\t[0-9][0-9]*\t//p'
 }
 
 select_preferred_image_base_folder() {
   local pokemon_abs="$1"
+  local preferred_name="${2:-}"
   find "$pokemon_abs" -mindepth 1 -maxdepth 1 -type f \
     \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.bmp' -o -iname '*.tif' -o -iname '*.tiff' -o -iname '*.heic' -o -iname '*.heif' -o -iname '*.avif' \) \
-    | perl -ne '
+    | PREFERRED_NAME="$preferred_name" perl -ne '
         chomp;
         my $path = $_;
         my $name = lc($path);
         $name =~ s{.*/}{};
+        my $stem = $name;
+        $stem =~ s/\.[^.]+$//;
+
+        my $preferred = lc($ENV{PREFERRED_NAME} // "");
+        $preferred =~ s/[^a-z0-9]+//g;
+        my $stem_compact = $stem;
+        $stem_compact =~ s/[^a-z0-9]+//g;
+
         my $has_color = ($name =~ /\bcolor\b/ || $name =~ /\bcol\b/);
         my $has_one = ($name =~ /(?:^|[^0-9])1(?:[^0-9]|$)/);
+        my $has_project_name = ($preferred ne "" && index($stem_compact, $preferred) >= 0);
         my $tier = 3;
         if ($has_color && $has_one) { $tier = 0; }
         elsif ($has_color) { $tier = 1; }
         elsif ($has_one) { $tier = 2; }
-        print "$tier\t$path\n";
+        my $project_name_rank = $has_project_name ? 0 : 1;
+        print "$tier\t$project_name_rank\t$path\n";
       ' \
-    | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 \
-    | sed -n '1s/^[0-9][0-9]*\t//p'
+    | LC_ALL=C sort -t $'\t' -k1,1n -k2,2n -k3,3 \
+    | sed -n '1s/^[0-9][0-9]*\t[0-9][0-9]*\t//p'
 }
 
 has_base_folder_assets() {
@@ -396,6 +420,7 @@ OUTPUT_DIR_NAME="_photo_directory"
 OUTPUT_ROOT_OVERRIDE=""
 LINK_MODE="hardlink"
 MANIFEST_MODE="append"
+PLAN_SOURCE="scan"
 HAS_OSASCRIPT=0
 
 while [ "$#" -gt 0 ]; do
@@ -421,6 +446,14 @@ while [ "$#" -gt 0 ]; do
     --apply)
       MODE="apply"
 	  ;;
+    --from-manifest)
+      PLAN_SOURCE="manifest"
+      ;;
+    --rebuild)
+      MODE="apply"
+      PLAN_SOURCE="manifest"
+      REPLACE=1
+      ;;
 	  --link-mode)
 		shift
 		[ "$#" -gt 0 ] || err "--link-mode requires a value"
@@ -495,6 +528,12 @@ PLAN_FILE="$TMP_DIR/plan.tsv"
 ALIAS_CANDIDATES_FILE="$TMP_DIR/alias_candidates.txt"
 CANONICAL_PROJECT_DIRS_FILE="$TMP_DIR/canonical_projects.txt"
 CANONICAL_PROJECTS_RAW_FILE="$TMP_DIR/canonical_projects_raw.txt"
+MANIFEST_PLAN_SOURCE_FILE="$TMP_DIR/manifest_plan_source.tsv"
+
+if [ "$PLAN_SOURCE" = "manifest" ]; then
+  [ -f "$MANIFEST_FILE" ] || err "--from-manifest requires an existing manifest: $MANIFEST_FILE"
+  cp "$MANIFEST_FILE" "$MANIFEST_PLAN_SOURCE_FILE"
+fi
 
 if command -v osascript >/dev/null 2>&1; then
   HAS_OSASCRIPT=1
@@ -513,136 +552,170 @@ is_within_output_root() {
   esac
 }
 
-find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type d | LC_ALL=C sort > "$CANONICAL_PROJECTS_RAW_FILE"
-: > "$CANONICAL_PROJECT_DIRS_FILE"
-while IFS= read -r canonical_abs; do
-  [ -n "$canonical_abs" ] || continue
-  is_within_output_root "$canonical_abs" && continue
-  printf '%s\n' "$canonical_abs" >> "$CANONICAL_PROJECT_DIRS_FILE"
-done < "$CANONICAL_PROJECTS_RAW_FILE"
-cp "$CANONICAL_PROJECT_DIRS_FILE" "$PROJECTS_FILE"
-find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type l | LC_ALL=C sort >> "$PROJECTS_FILE"
-
-find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type f | LC_ALL=C sort > "$ALIAS_CANDIDATES_FILE"
-while IFS= read -r alias_abs; do
-  [ -n "$alias_abs" ] || continue
-  is_within_output_root "$alias_abs" && continue
-  alias_rel="${alias_abs#$SORTED_DIR_ABS/}"
-  alias_pokemon="${alias_rel%%/*}"
-  [ "$alias_pokemon" != "_reports" ] || continue
-
-  alias_target=""
-  if [ "$HAS_OSASCRIPT" -eq 1 ]; then
-    alias_target="$(resolve_finder_alias_target "$alias_abs" | tr -d '\r')"
-  fi
-  if [ -z "$alias_target" ]; then
-    alias_target="$(resolve_shortcut_target_by_basename "$alias_abs")"
-  fi
-
-  [ -n "$alias_target" ] || continue
-  [ -d "$alias_target" ] || continue
-  case "$alias_target" in
-    "$SORTED_DIR_ABS"/*)
-      printf '%s\n' "$alias_abs" >> "$PROJECTS_FILE"
-      ;;
-    *)
-      continue
-      ;;
-  esac
-done < "$ALIAS_CANDIDATES_FILE"
-
-while IFS= read -r pokemon_abs; do
-  [ -n "$pokemon_abs" ] || continue
-  is_within_output_root "$pokemon_abs" && continue
-  pokemon_name="$(basename "$pokemon_abs")"
-  [ "$pokemon_name" != "_reports" ] || continue
-  # Include base Pokemon folder only if it contains direct files.
-  if has_base_folder_assets "$pokemon_abs"; then
-    printf '%s\n' "$pokemon_abs" >> "$PROJECTS_FILE"
-  fi
-done < <(find "$SORTED_DIR_ABS" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
-
-LC_ALL=C sort -u "$PROJECTS_FILE" -o "$PROJECTS_FILE"
 : > "$PLAN_FILE"
 
 project_total=0
 selected_total=0
 missing_total=0
 ignored_total=0
-sequence=1
+if [ "$PLAN_SOURCE" = "scan" ]; then
+  find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type d | LC_ALL=C sort > "$CANONICAL_PROJECTS_RAW_FILE"
+  : > "$CANONICAL_PROJECT_DIRS_FILE"
+  while IFS= read -r canonical_abs; do
+    [ -n "$canonical_abs" ] || continue
+    is_within_output_root "$canonical_abs" && continue
+    printf '%s\n' "$canonical_abs" >> "$CANONICAL_PROJECT_DIRS_FILE"
+  done < "$CANONICAL_PROJECTS_RAW_FILE"
+  cp "$CANONICAL_PROJECT_DIRS_FILE" "$PROJECTS_FILE"
+  find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type l | LC_ALL=C sort >> "$PROJECTS_FILE"
 
-while IFS= read -r project_abs; do
-  [ -n "$project_abs" ] || continue
-  is_within_output_root "$project_abs" && continue
-  project_rel="${project_abs#$SORTED_DIR_ABS/}"
-  pokemon="${project_rel%%/*}"
-  [ "$pokemon" != "_reports" ] || continue
-  [ "$pokemon" != "$OUTPUT_DIR_NAME" ] || continue
+  find "$SORTED_DIR_ABS" -mindepth 2 -maxdepth 2 -type f | LC_ALL=C sort > "$ALIAS_CANDIDATES_FILE"
+  while IFS= read -r alias_abs; do
+    [ -n "$alias_abs" ] || continue
+    is_within_output_root "$alias_abs" && continue
+    alias_rel="${alias_abs#$SORTED_DIR_ABS/}"
+    alias_pokemon="${alias_rel%%/*}"
+    [ "$alias_pokemon" != "_reports" ] || continue
 
-  if [ "$project_rel" != "$pokemon" ]; then
-    project_name="${project_rel#*/}"
-    if is_ignorable_support_project "$project_name"; then
-      ignored_total=$((ignored_total + 1))
+    alias_target=""
+    if [ "$HAS_OSASCRIPT" -eq 1 ]; then
+      alias_target="$(resolve_finder_alias_target "$alias_abs" | tr -d '\r')"
+    fi
+    if [ -z "$alias_target" ]; then
+      alias_target="$(resolve_shortcut_target_by_basename "$alias_abs")"
+    fi
+
+    [ -n "$alias_target" ] || continue
+    [ -d "$alias_target" ] || continue
+    case "$alias_target" in
+      "$SORTED_DIR_ABS"/*)
+        printf '%s\n' "$alias_abs" >> "$PROJECTS_FILE"
+        ;;
+      *)
+        continue
+        ;;
+    esac
+  done < "$ALIAS_CANDIDATES_FILE"
+
+  while IFS= read -r pokemon_abs; do
+    [ -n "$pokemon_abs" ] || continue
+    is_within_output_root "$pokemon_abs" && continue
+    pokemon_name="$(basename "$pokemon_abs")"
+    [ "$pokemon_name" != "_reports" ] || continue
+    # Include base Pokemon folder only if it contains direct files.
+    if has_base_folder_assets "$pokemon_abs"; then
+      printf '%s\n' "$pokemon_abs" >> "$PROJECTS_FILE"
+    fi
+  done < <(find "$SORTED_DIR_ABS" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
+
+  LC_ALL=C sort -u "$PROJECTS_FILE" -o "$PROJECTS_FILE"
+
+  while IFS= read -r project_abs; do
+    [ -n "$project_abs" ] || continue
+    is_within_output_root "$project_abs" && continue
+    project_rel="${project_abs#$SORTED_DIR_ABS/}"
+    pokemon="${project_rel%%/*}"
+    [ "$pokemon" != "_reports" ] || continue
+    [ "$pokemon" != "$OUTPUT_DIR_NAME" ] || continue
+
+    if [ "$project_rel" != "$pokemon" ]; then
+      project_name="${project_rel#*/}"
+      if is_ignorable_support_project "$project_name"; then
+        ignored_total=$((ignored_total + 1))
+        continue
+      fi
+    fi
+
+    project_total=$((project_total + 1))
+    project_file_summary_text="$(project_file_summary "$project_rel")"
+    project_file_summary_text="$(sanitize_manifest_field "$project_file_summary_text")"
+    project_file_total="${project_file_summary_text%% total*}"
+    if ! [[ "$project_file_total" =~ ^[0-9]+$ ]]; then
+      project_file_total="0"
+    fi
+
+    if [ "$project_rel" = "$pokemon" ]; then
+      # Base Pokemon folder candidate; only check direct files to avoid
+      # accidentally selecting images from nested project folders.
+      first_image="$(select_preferred_image_base_folder "$project_abs" "$pokemon")"
+    else
+      scan_root_abs="$(resolve_project_scan_root "$project_abs")"
+      if [ -n "$scan_root_abs" ]; then
+        first_image="$(select_preferred_image "$scan_root_abs" "$project_name")"
+      else
+        first_image=""
+      fi
+    fi
+
+    if [ -z "$first_image" ]; then
+      printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+        "$project_rel" "$FS" "-" "$FS" "-" "$FS" "-" "$FS" "no_image" "$FS" "$project_file_total" "$FS" "$project_file_summary_text" >> "$PLAN_FILE"
+      missing_total=$((missing_total + 1))
       continue
     fi
-  fi
 
-  project_total=$((project_total + 1))
-  project_file_summary_text="$(project_file_summary "$project_rel")"
-  project_file_summary_text="$(sanitize_manifest_field "$project_file_summary_text")"
-  project_file_total="${project_file_summary_text%% total*}"
-  if ! [[ "$project_file_total" =~ ^[0-9]+$ ]]; then
-    project_file_total="0"
-  fi
-
-  if [ "$project_rel" = "$pokemon" ]; then
-    # Base Pokemon folder candidate; only check direct files to avoid
-    # accidentally selecting images from nested project folders.
-    first_image="$(select_preferred_image_base_folder "$project_abs")"
-  else
-    scan_root_abs="$(resolve_project_scan_root "$project_abs")"
-    if [ -n "$scan_root_abs" ]; then
-      first_image="$(select_preferred_image "$scan_root_abs")"
-    else
-      first_image=""
+    source_rel="${first_image#$SORTED_DIR_ABS/}"
+    base_name="$(basename "$first_image")"
+    pokemon_name="${project_rel%%/*}"
+    ext=""
+    if [[ "$base_name" == *.* && "$base_name" != .* ]]; then
+      ext="${base_name##*.}"
+      ext="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
     fi
-  fi
+    [ -n "$ext" ] || ext="img"
 
-  if [ -z "$first_image" ]; then
+    pokemon_slug="$(slugify "$pokemon_name")"
+    project_slug="$(slugify "$project_rel")"
+    output_name="${project_slug}.${ext}"
+    output_rel="images/$pokemon_slug/$output_name"
+
     printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
-      "$project_rel" "$FS" "-" "$FS" "-" "$FS" "-" "$FS" "no_image" "$FS" "$project_file_total" "$FS" "$project_file_summary_text" >> "$PLAN_FILE"
-    missing_total=$((missing_total + 1))
-    continue
-  fi
+      "$project_rel" "$FS" "$source_rel" "$FS" "$output_rel" "$FS" "$first_image" "$FS" "selected" "$FS" "$project_file_total" "$FS" "$project_file_summary_text" >> "$PLAN_FILE"
 
-  source_rel="${first_image#$SORTED_DIR_ABS/}"
-  base_name="$(basename "$first_image")"
-  pokemon_name="${project_rel%%/*}"
-  ext=""
-  if [[ "$base_name" == *.* && "$base_name" != .* ]]; then
-    ext="${base_name##*.}"
-    ext="$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
-  fi
-  [ -n "$ext" ] || ext="img"
+    selected_total=$((selected_total + 1))
+  done < "$PROJECTS_FILE"
+else
+  awk -F $'\t' -v OFS="$FS" -v sorted_root="$SORTED_DIR_ABS/" '
+    NR == 1 { next }
+    $1 == "" { next }
+    {
+      project_path = $1
+      source_image_path = $2
+      photo_asset_path = $3
+      row_status = $4
+      project_file_total = $5
+      project_file_summary = $6
 
-  pokemon_slug="$(slugify "$pokemon_name")"
-  project_slug="$(slugify "$project_rel")"
-  output_name="${project_slug}.${ext}"
-  output_rel="images/$pokemon_slug/$output_name"
+      source_abs = "-"
+      plan_status = row_status
 
-  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
-    "$project_rel" "$FS" "$source_rel" "$FS" "$output_rel" "$FS" "$first_image" "$FS" "selected" "$FS" "$project_file_total" "$FS" "$project_file_summary_text" >> "$PLAN_FILE"
+      if (source_image_path != "" && photo_asset_path != "") {
+        source_abs = sorted_root source_image_path
+        plan_status = "selected"
+      } else if (plan_status == "") {
+        plan_status = "no_image"
+      }
 
-  selected_total=$((selected_total + 1))
-  sequence=$((sequence + 1))
-done < "$PROJECTS_FILE"
+      print project_path, source_image_path, photo_asset_path, source_abs, plan_status, project_file_total, project_file_summary
+    }
+  ' "$MANIFEST_PLAN_SOURCE_FILE" > "$PLAN_FILE"
+
+  project_total="$(awk 'END { print NR + 0 }' "$PLAN_FILE")"
+  selected_total="$(awk -F "$FS" '$5 == "selected" { count++ } END { print count + 0 }' "$PLAN_FILE")"
+  missing_total=$((project_total - selected_total))
+fi
 
 echo "Sorted directory: $SORTED_DIR_ABS"
 echo "Mode: $MODE"
+echo "Plan source: $PLAN_SOURCE"
 echo "Output directory: $OUTPUT_DIR_ABS"
 echo "Link mode: $LINK_MODE"
 echo "Manifest mode: $MANIFEST_MODE"
-echo "Projects scanned: $project_total"
+if [ "$PLAN_SOURCE" = "scan" ]; then
+  echo "Projects scanned: $project_total"
+else
+  echo "Projects loaded from manifest: $project_total"
+fi
 echo "Projects with selected image: $selected_total"
 echo "Projects without image: $missing_total"
 echo "Projects ignored (support folders): $ignored_total"
@@ -709,6 +782,11 @@ while IFS="$FS" read -r project_rel source_rel output_rel source_abs status proj
   [ -n "$project_rel" ] || continue
   if [ "$status" != "selected" ]; then
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$project_rel" "" "" "$status" "$project_file_total" "$project_file_summary_text" >> "$CURRENT_MANIFEST_ROWS_FILE"
+    continue
+  fi
+
+  if [ ! -f "$source_abs" ]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$project_rel" "$source_rel" "$output_rel" "source_missing" "$project_file_total" "$project_file_summary_text" >> "$CURRENT_MANIFEST_ROWS_FILE"
     continue
   fi
 
